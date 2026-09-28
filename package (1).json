@@ -1,0 +1,17 @@
+{
+  "name": "squizyys-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord-Bot für den Clan Squizyys mit Moderation, Tickets, Join-to-Create-Voice-Channels und Level-System",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
