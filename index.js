@@ -40,6 +40,7 @@ if (fs.existsSync(DATA)) {
 if (!db.voiceOwners) db.voiceOwners = {};
 const emptyVoiceTimers = new Map();
 const zeitplanPending = new Map();
+const resetPending = new Map();
 const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
  
 // XP-START
@@ -376,7 +377,8 @@ const commands = [
       .addStringOption(o => o.setName("beschreibung").setDescription("Beschreibung (optional)").setRequired(false).setMaxLength(300)))
     .addSubcommand(s => s.setName("entfernen").setDescription("Entfernt ein Item aus dem Katalog")
       .addStringOption(o => o.setName("name").setDescription("Name des Items").setRequired(true).setMaxLength(80)))
-    .addSubcommand(s => s.setName("liste").setDescription("Zeigt den Verleih-Katalog"))
+    .addSubcommand(s => s.setName("liste").setDescription("Zeigt den Verleih-Katalog")),
+  new SlashCommandBuilder().setName("serverreset").setDescription("⚠️ Löscht ALLE Kanäle und Kategorien des Servers unwiderruflich")
 ].map(c => c.toJSON());
  
 const client = new Client({
@@ -726,6 +728,37 @@ client.on("interactionCreate", async interaction => {
     return;
   }
  
+  if (interaction.isButton() && (interaction.customId === "reset_confirm" || interaction.customId === "reset_cancel")) {
+    const pending = resetPending.get(interaction.user.id);
+    if (!pending || pending.guildId !== interaction.guild.id || Date.now() > pending.expires) {
+      resetPending.delete(interaction.user.id);
+      return interaction.update({ content: "❌ Diese Bestätigung ist abgelaufen. Bitte führe /serverreset erneut aus.", embeds: [], components: [] });
+    }
+    resetPending.delete(interaction.user.id);
+ 
+    if (interaction.customId === "reset_cancel") {
+      return interaction.update({ content: "✅ Abgebrochen, es wurde nichts gelöscht.", embeds: [], components: [] });
+    }
+ 
+    await interaction.update({ content: "🗑️ Lösche alle Kanäle, das kann einen Moment dauern...", embeds: [], components: [] });
+    const guild = interaction.guild;
+    const channels = [...guild.channels.cache.values()];
+    let count = 0;
+    for (const ch of channels) {
+      const success = await ch.delete("Serverreset über /serverreset").then(() => true).catch(() => false);
+      if (success) count++;
+    }
+    const c = cfg(guild.id);
+    c.welcomeChannel = null;
+    c.logChannel = null;
+    c.ticketCategory = null;
+    c.joinCreateChannel = null;
+    c.joinCreateCategory = null;
+    save();
+ 
+    return interaction.followUp({ content: `✅ ${count} Kanäle/Kategorien gelöscht. Mit \`/setup\` kannst du den Server neu aufbauen.`, ephemeral: true }).catch(() => {});
+  }
+ 
   if (interaction.isButton() && interaction.customId === "ticket_close") {
     if (!isStaff(interaction.member)) return interaction.reply({ content: "❌ Nur das Team kann Tickets schließen.", ephemeral: true });
     const reqId = interaction.channel.id;
@@ -817,7 +850,7 @@ client.on("interactionCreate", async interaction => {
         "**Level:** `/rank` `/leaderboard` `/levelrole` `/levelchannel` `/xp`\n" +
         "**Verleih:** `/item`\n" +
         "**Channels:** `/lock` `/unlock` `/slowmode` `/format` `/glowup`\n" +
-        "**System:** `/setup` `/config` `/setlogs` `/ticket` `/joincreate` `/voicepanel`"
+        "**System:** `/setup` `/config` `/setlogs` `/ticket` `/joincreate` `/voicepanel` `/serverreset`"
       ).setColor(0x9b5cff)] });
     }
  
@@ -931,6 +964,28 @@ client.on("interactionCreate", async interaction => {
             )
             .setFooter({ text: "Vergib die Rolle @Team an dein Team – neue Mitglieder erhalten @Mitglied automatisch." })
         ]
+      });
+    }
+ 
+    if (commandName === "serverreset") {
+      if (!ok(interaction, PermissionsBitField.Flags.Administrator)) {
+        return interaction.reply({ content: "❌ Nur Administratoren dürfen den Server zurücksetzen.", ephemeral: true });
+      }
+      const total = guild.channels.cache.size;
+      resetPending.set(interaction.user.id, { guildId: guild.id, expires: Date.now() + 60000 });
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("reset_confirm").setLabel("Ja, alles löschen").setEmoji("🗑️").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("reset_cancel").setLabel("Abbrechen").setStyle(ButtonStyle.Secondary)
+      );
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("⚠️ Server wirklich zurücksetzen?")
+            .setDescription(`Das löscht **alle ${total} Kanäle und Kategorien** dieses Servers unwiderruflich, inklusive Logs, Tickets und diesem Kanal hier, falls du hier bist.\n\nDas kann **nicht rückgängig** gemacht werden. Mit \`/setup\` lässt sich der Server danach neu aufbauen.`)
+            .setColor(0xed4245)
+        ],
+        components: [row],
+        ephemeral: true
       });
     }
  
