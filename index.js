@@ -20,16 +20,16 @@ const {
 } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
-
+ 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
-
+ 
 if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   console.error("Missing DISCORD_TOKEN, CLIENT_ID or GUILD_ID.");
   process.exit(1);
 }
-
+ 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
 const DATA = path.join(DATA_DIR, "data.json");
@@ -41,11 +41,11 @@ if (!db.voiceOwners) db.voiceOwners = {};
 const emptyVoiceTimers = new Map();
 const zeitplanPending = new Map();
 const WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
-
+ 
 // XP-START
 const xpCooldowns = new Map();
 let saveTimer = null;
-
+ 
 function saveSoon() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
@@ -53,11 +53,11 @@ function saveSoon() {
     save();
   }, 15000);
 }
-
+ 
 function xpNeeded(level) {
   return 5 * level * level + 50 * level + 100;
 }
-
+ 
 function levelFromXp(total) {
   let level = 0;
   let rest = total;
@@ -67,22 +67,22 @@ function levelFromXp(total) {
   }
   return { level, current: rest, needed: xpNeeded(level) };
 }
-
+ 
 function xpTable(guildId) {
   const c = cfg(guildId);
   c.xp ??= {};
   return c.xp;
 }
-
+ 
 function xpRanking(guildId) {
   return Object.entries(xpTable(guildId)).sort((a, b) => b[1].xp - a[1].xp);
 }
-
+ 
 function progressBar(current, needed, size = 10) {
   const filled = Math.max(0, Math.min(size, Math.round((current / needed) * size)));
   return "█".repeat(filled) + "░".repeat(size - filled);
 }
-
+ 
 async function grantLevelRoles(member, level) {
   const roles = cfg(member.guild.id).levelRoles || {};
   for (const [lvl, roleId] of Object.entries(roles)) {
@@ -90,7 +90,7 @@ async function grantLevelRoles(member, level) {
     await member.roles.add(roleId, `Level-Belohnung: Level ${lvl}`).catch(() => {});
   }
 }
-
+ 
 function announceLevelUp(member, level, fallbackChannel) {
   const c = cfg(member.guild.id);
   const channel = (c.levelChannel && member.guild.channels.cache.get(c.levelChannel)) || fallbackChannel;
@@ -103,20 +103,20 @@ function announceLevelUp(member, level, fallbackChannel) {
     ]
   }).catch(() => {});
 }
-
+ 
 async function addXp(member, amount, fallbackChannel = null) {
   const entry = (xpTable(member.guild.id)[member.id] ??= { xp: 0 });
   const before = levelFromXp(entry.xp).level;
   entry.xp += amount;
   const after = levelFromXp(entry.xp).level;
   saveSoon();
-
+ 
   if (after > before) {
     await grantLevelRoles(member, after);
     announceLevelUp(member, after, fallbackChannel);
   }
 }
-
+ 
 function startVoiceXp() {
   setInterval(() => {
     for (const guild of client.guilds.cache.values()) {
@@ -134,12 +134,12 @@ function startVoiceXp() {
   }, 60000);
 }
 // XP-END
-
+ 
 function save() {
   fs.writeFileSync(DATA, JSON.stringify(db, null, 2));
 }
 function cfg(guildId) {
-  if (!db[guildId]) db[guildId] = { welcomeChannel: null, logChannel: null, ticketCategory: null, joinCreateChannel: null, joinCreateCategory: null, emojiFormat: true, warnings: {} };
+  if (!db[guildId]) db[guildId] = { welcomeChannel: null, logChannel: null, ticketCategory: null, joinCreateChannel: null, joinCreateCategory: null, emojiFormat: true, warnings: {}, memberRole: null };
   return db[guildId];
 }
 function isStaff(member) {
@@ -152,7 +152,7 @@ function ok(interaction, perm) {
 function safeName(name) {
   return name.toLowerCase().replace(/[^\p{L}\p{N}\-_]/gu, "").slice(0, 80) || "channel";
 }
-
+ 
 // ITEMS-START
 function itemsTable(guildId) {
   const c = cfg(guildId);
@@ -165,7 +165,7 @@ function itemId(name) {
 const verleihPending = new Map();
 db.verleihRequests ??= {};
 // ITEMS-END
-
+ 
 function setVoiceOwner(channel, ownerId) {
   db.voiceOwners[channel.id] = {
     guildId: channel.guild.id,
@@ -173,39 +173,39 @@ function setVoiceOwner(channel, ownerId) {
   };
   save();
 }
-
+ 
 function removeVoiceOwner(channelId) {
   delete db.voiceOwners[channelId];
   save();
 }
-
+ 
 function getOwnedVoiceChannel(guild, userId) {
   const entry = Object.entries(db.voiceOwners).find(([, owner]) =>
     owner.guildId === guild.id && owner.ownerId === userId
   );
-
+ 
   if (!entry) return null;
-
+ 
   const channel = guild.channels.cache.get(entry[0]);
   if (!channel || channel.type !== ChannelType.GuildVoice) {
     removeVoiceOwner(entry[0]);
     return null;
   }
-
+ 
   return channel;
 }
-
+ 
 function clearVoiceDeletion(channelId) {
   const timer = emptyVoiceTimers.get(channelId);
   if (!timer) return;
   clearTimeout(timer);
   emptyVoiceTimers.delete(channelId);
 }
-
+ 
 function scheduleVoiceDeletion(channel) {
   if (!channel || channel.members.size > 0) return;
   clearVoiceDeletion(channel.id);
-
+ 
   const timer = setTimeout(async () => {
     emptyVoiceTimers.delete(channel.id);
     const current = channel.guild.channels.cache.get(channel.id);
@@ -214,10 +214,10 @@ function scheduleVoiceDeletion(channel) {
     removeVoiceOwner(channel.id);
     await current.delete().catch(() => {});
   }, 30000);
-
+ 
   emptyVoiceTimers.set(channel.id, timer);
 }
-
+ 
 function voicePanel(channel) {
   return {
     embeds: [
@@ -242,7 +242,7 @@ function voicePanel(channel) {
     ]
   };
 }
-
+ 
 function ticketPanel() {
   return {
     embeds: [
@@ -259,7 +259,7 @@ function ticketPanel() {
     ]
   };
 }
-
+ 
 async function openTicketChannel(guild, user, { prefix, topic, category, embed, extraRow }) {
   const chan = await guild.channels.create({
     name: `${prefix}-${safeName(user.username)}`,
@@ -279,31 +279,31 @@ async function openTicketChannel(guild, user, { prefix, topic, category, embed, 
   await chan.send({ content: `${user}`, embeds: [embed], components: rows });
   return chan;
 }
-
+ 
 const leadingEmojiPattern = /^((?:\p{Extended_Pictographic}|\p{Emoji_Presentation})(?:\uFE0F|\p{Emoji_Modifier}|\u200D(?:\p{Extended_Pictographic}|\p{Emoji_Presentation}))*)/u;
-
+ 
 function formatChannelName(name) {
   let channelName = name.trim();
   const alreadyFormatted = channelName.match(/^『([^』]+)』\s*(.*)$/u);
-
+ 
   if (alreadyFormatted) {
     const emoji = alreadyFormatted[1].trim();
     channelName = alreadyFormatted[2].trim();
     return emoji && channelName ? `『${emoji}』${channelName}` : null;
   }
-
+ 
   const emojiMatch = channelName.match(leadingEmojiPattern);
   if (!emojiMatch) return null;
-
+ 
   const emoji = emojiMatch[1];
   channelName = channelName
     .slice(emoji.length)
     .trim()
     .replace(/^[|｜]\s*/, "");
-
+ 
   return channelName ? `『${emoji}』${channelName}` : null;
 }
-
+ 
 const commands = [
   new SlashCommandBuilder().setName("help").setDescription("Zeigt alle Bot-Funktionen"),
   new SlashCommandBuilder().setName("setup").setDescription("Erstellt wichtige Bot-Kanäle und Grundkonfiguration"),
@@ -378,7 +378,7 @@ const commands = [
       .addStringOption(o => o.setName("name").setDescription("Name des Items").setRequired(true).setMaxLength(80)))
     .addSubcommand(s => s.setName("liste").setDescription("Zeigt den Verleih-Katalog"))
 ].map(c => c.toJSON());
-
+ 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -387,12 +387,12 @@ const client = new Client({
   ],
   partials: [Partials.Channel, Partials.Message, Partials.GuildMember]
 });
-
+ 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
   await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
 }
-
+ 
 function log(guild, text) {
   const channelId = cfg(guild.id).logChannel;
   const channel = channelId ? guild.channels.cache.get(channelId) : null;
@@ -407,7 +407,7 @@ function log(guild, text) {
     }).catch(() => {});
   }
 }
-
+ 
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
   startVoiceXp();
@@ -418,9 +418,12 @@ client.once("ready", async () => {
     console.error("Command registration failed:", e);
   }
 });
-
+ 
 client.on("guildMemberAdd", async member => {
   const c = cfg(member.guild.id);
+  if (c.memberRole) {
+    await member.roles.add(c.memberRole).catch(() => {});
+  }
   if (!c.welcomeChannel) return;
   const channel = member.guild.channels.cache.get(c.welcomeChannel);
   if (!channel?.isTextBased()) return;
@@ -431,19 +434,19 @@ client.on("guildMemberAdd", async member => {
     .setColor(0x9b5cff);
   channel.send({ embeds: [embed] }).catch(() => {});
 });
-
+ 
 client.on("messageCreate", async message => {
   if (!message.guild || message.author.bot || message.webhookId) return;
   const key = `${message.guild.id}:${message.author.id}`;
   const now = Date.now();
   if (now - (xpCooldowns.get(key) || 0) < 60000) return;
   xpCooldowns.set(key, now);
-
+ 
   const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
   if (!member) return;
   await addXp(member, 15 + Math.floor(Math.random() * 11), message.channel).catch(console.error);
 });
-
+ 
 client.on("channelCreate", async channel => {
   if (!channel.guild || !cfg(channel.guild.id).emojiFormat) return;
   if (channel.type !== ChannelType.GuildText && channel.type !== ChannelType.GuildVoice) return;
@@ -451,7 +454,7 @@ client.on("channelCreate", async channel => {
   if (!newName || channel.name === newName) return;
   await channel.setName(newName).catch(() => {});
 });
-
+ 
 client.on("voiceStateUpdate", async (oldState, newState) => {
   if (oldState.channelId && oldState.channelId !== newState.channelId) {
     const oldChannel = oldState.guild.channels.cache.get(oldState.channelId);
@@ -459,11 +462,11 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
       scheduleVoiceDeletion(oldChannel);
     }
   }
-
+ 
   if (newState.channelId && db.voiceOwners[newState.channelId]) {
     clearVoiceDeletion(newState.channelId);
   }
-
+ 
   const c = cfg(newState.guild.id);
   if (!c.joinCreateChannel || newState.channelId !== c.joinCreateChannel) return;
   if (!newState.member) return;
@@ -488,24 +491,24 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     log(newState.guild, `${newState.member.user.tag} hat den Voice-Call ${ch.name} erstellt.`);
   } catch (e) { console.error("Join-to-create:", e); }
 });
-
+ 
 client.on("interactionCreate", async interaction => {
   if (interaction.isModalSubmit() && interaction.customId === "voice_rename_modal") {
     const voice = interaction.guild ? getOwnedVoiceChannel(interaction.guild, interaction.user.id) : null;
     if (!voice) return interaction.reply({ content: "❌ Du hast keinen eigenen Join-to-Create-Call.", ephemeral: true });
-
+ 
     const requestedName = interaction.fields.getTextInputValue("voice_name").trim();
     if (!requestedName) return interaction.reply({ content: "❌ Der Name darf nicht leer sein.", ephemeral: true });
-
+ 
     const newName = formatChannelName(requestedName) || requestedName;
     await voice.setName(newName.slice(0, 100));
     return interaction.reply({ content: `✅ Dein Call heißt jetzt ${voice}.`, ephemeral: true });
   }
-
+ 
   if (interaction.isStringSelectMenu() && interaction.customId === "voice_limit_select") {
     const voice = interaction.guild ? getOwnedVoiceChannel(interaction.guild, interaction.user.id) : null;
     if (!voice) return interaction.reply({ content: "❌ Du hast keinen eigenen Join-to-Create-Call.", ephemeral: true });
-
+ 
     const limit = Number(interaction.values[0]);
     await voice.setUserLimit(limit);
     return interaction.reply({
@@ -513,32 +516,32 @@ client.on("interactionCreate", async interaction => {
       ephemeral: true
     });
   }
-
+ 
   if (interaction.isUserSelectMenu() && interaction.customId === "voice_kick_select") {
     const voice = interaction.guild ? getOwnedVoiceChannel(interaction.guild, interaction.user.id) : null;
     if (!voice) return interaction.reply({ content: "❌ Du hast keinen eigenen Join-to-Create-Call.", ephemeral: true });
-
+ 
     const targetId = interaction.values[0];
     if (targetId === interaction.user.id) {
       return interaction.reply({ content: "❌ Du kannst dich nicht selbst entfernen.", ephemeral: true });
     }
-
+ 
     const target = voice.guild.members.cache.get(targetId);
     if (!target || !voice.members.has(targetId)) {
       return interaction.reply({ content: "❌ Dieses Mitglied ist nicht in deinem Call.", ephemeral: true });
     }
-
+ 
     await target.voice.disconnect("Vom Besitzer des Calls entfernt");
     return interaction.reply({ content: `✅ ${target.user.tag} wurde aus deinem Call entfernt.`, ephemeral: true });
   }
-
+ 
   if (interaction.isStringSelectMenu() && interaction.customId === "zeitplan_days") {
     const pending = zeitplanPending.get(interaction.user.id);
     if (!pending) {
       return interaction.update({ content: "❌ Diese Auswahl ist abgelaufen. Bitte führe /zeitplan erneut aus.", components: [] });
     }
     zeitplanPending.delete(interaction.user.id);
-
+ 
     const days = interaction.values.map(Number).sort((a, b) => a - b).map(v => WEEKDAYS[v - 1]);
     const isVideo = pending.typ === "video";
     const embed = new EmbedBuilder()
@@ -551,7 +554,7 @@ client.on("interactionCreate", async interaction => {
       .setTimestamp();
     if (pending.titel) embed.setDescription(`**${pending.titel}**`);
     if (pending.notiz) embed.addFields({ name: "📝 Hinweis", value: pending.notiz });
-
+ 
     try {
       const target = interaction.guild?.channels.cache.get(pending.channelId) || interaction.channel;
       await target.send({ embeds: [embed] });
@@ -562,11 +565,11 @@ client.on("interactionCreate", async interaction => {
       return interaction.update({ content: "❌ Ich konnte den Zeitplan nicht senden. Prüfe meine Rechte im Kanal.", components: [] });
     }
   }
-
+ 
   if (interaction.isButton() && interaction.customId.startsWith("voice_")) {
     const voice = interaction.guild ? getOwnedVoiceChannel(interaction.guild, interaction.user.id) : null;
     if (!voice) return interaction.reply({ content: "❌ Du hast keinen eigenen Join-to-Create-Call.", ephemeral: true });
-
+ 
     if (interaction.customId === "voice_rename") {
       const modal = new ModalBuilder()
         .setCustomId("voice_rename_modal")
@@ -582,7 +585,7 @@ client.on("interactionCreate", async interaction => {
       modal.addComponents(new ActionRowBuilder().addComponents(input));
       return interaction.showModal(modal);
     }
-
+ 
     if (interaction.customId === "voice_limit") {
       const select = new StringSelectMenuBuilder()
         .setCustomId("voice_limit_select")
@@ -599,7 +602,7 @@ client.on("interactionCreate", async interaction => {
         ephemeral: true
       });
     }
-
+ 
     if (interaction.customId === "voice_kick") {
       const select = new UserSelectMenuBuilder()
         .setCustomId("voice_kick_select")
@@ -612,34 +615,34 @@ client.on("interactionCreate", async interaction => {
         ephemeral: true
       });
     }
-
+ 
     if (interaction.customId === "voice_lock") {
       await voice.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: false });
       return interaction.reply({ content: "🔒 Dein Call ist jetzt gesperrt.", ephemeral: true });
     }
-
+ 
     if (interaction.customId === "voice_unlock") {
       await voice.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: null });
       return interaction.reply({ content: "🔓 Dein Call ist wieder offen.", ephemeral: true });
     }
-
+ 
     if (interaction.customId === "voice_hide") {
       await voice.permissionOverwrites.edit(interaction.guild.roles.everyone, { ViewChannel: false });
       return interaction.reply({ content: "🙈 Dein Call ist jetzt unsichtbar.", ephemeral: true });
     }
-
+ 
     if (interaction.customId === "voice_show") {
       await voice.permissionOverwrites.edit(interaction.guild.roles.everyone, { ViewChannel: null });
       return interaction.reply({ content: "👀 Dein Call ist wieder sichtbar.", ephemeral: true });
     }
-
+ 
     if (interaction.customId === "voice_delete") {
       removeVoiceOwner(voice.id);
       await voice.delete();
       return interaction.reply({ content: "🗑️ Dein Call wurde gelöscht.", ephemeral: true });
     }
   }
-
+ 
   if (interaction.isButton() && interaction.customId === "ticket_open_support") {
     const modal = new ModalBuilder().setCustomId("support_modal").setTitle("Support-Anfrage");
     modal.addComponents(
@@ -652,7 +655,7 @@ client.on("interactionCreate", async interaction => {
     );
     return interaction.showModal(modal);
   }
-
+ 
   if (interaction.isButton() && interaction.customId === "ticket_open_verleih") {
     const items = Object.entries(itemsTable(interaction.guild.id)).filter(([, it]) => it.verfuegbar);
     if (!items.length) {
@@ -670,7 +673,7 @@ client.on("interactionCreate", async interaction => {
       ephemeral: true
     });
   }
-
+ 
   if (interaction.isStringSelectMenu() && interaction.customId === "verleih_item_select") {
     const id = interaction.values[0];
     const item = itemsTable(interaction.guild.id)[id];
@@ -682,7 +685,7 @@ client.on("interactionCreate", async interaction => {
       const p = verleihPending.get(interaction.user.id);
       if (p && p.itemId === id) verleihPending.delete(interaction.user.id);
     }, 5 * 60 * 1000);
-
+ 
     const modal = new ModalBuilder().setCustomId("verleih_modal").setTitle(`Ausleihe: ${item.name}`.slice(0, 45));
     modal.addComponents(
       new ActionRowBuilder().addComponents(
@@ -694,17 +697,17 @@ client.on("interactionCreate", async interaction => {
     );
     return interaction.showModal(modal);
   }
-
+ 
   if (interaction.isButton() && (interaction.customId === "verleih_approve" || interaction.customId === "verleih_decline")) {
     if (!isStaff(interaction.member)) return interaction.reply({ content: "❌ Nur das Team kann Anfragen bearbeiten.", ephemeral: true });
     const reqId = interaction.channel.id;
     const req = db.verleihRequests[reqId];
     if (!req) return interaction.reply({ content: "❌ Zu dieser Anfrage liegen keine Daten mehr vor.", ephemeral: true });
-
+ 
     const items = itemsTable(interaction.guild.id);
     const item = items[req.itemId];
     const approve = interaction.customId === "verleih_approve";
-
+ 
     if (approve) {
       if (item) item.verfuegbar = false;
       save();
@@ -712,7 +715,7 @@ client.on("interactionCreate", async interaction => {
     } else {
       await interaction.reply({ embeds: [new EmbedBuilder().setDescription(`❌ Abgelehnt von ${interaction.user}.`).setColor(0xed4245)] });
     }
-
+ 
     const disabledRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("verleih_approve").setLabel("Genehmigen").setEmoji("✅").setStyle(ButtonStyle.Success).setDisabled(true),
       new ButtonBuilder().setCustomId("verleih_decline").setLabel("Ablehnen").setEmoji("❌").setStyle(ButtonStyle.Danger).setDisabled(true)
@@ -722,7 +725,7 @@ client.on("interactionCreate", async interaction => {
     save();
     return;
   }
-
+ 
   if (interaction.isButton() && interaction.customId === "ticket_close") {
     if (!isStaff(interaction.member)) return interaction.reply({ content: "❌ Nur das Team kann Tickets schließen.", ephemeral: true });
     const reqId = interaction.channel.id;
@@ -736,12 +739,12 @@ client.on("interactionCreate", async interaction => {
     setTimeout(() => interaction.channel?.delete().catch(() => {}), 1500);
     return;
   }
-
+ 
   if (interaction.isModalSubmit() && interaction.customId === "support_modal") {
     const guild = interaction.guild, c = cfg(guild.id);
     const existing = guild.channels.cache.find(x => x.topic === `ticket:${interaction.user.id}`);
     if (existing) return interaction.reply({ content: `Du hast bereits ein offenes Support-Ticket: ${existing}`, ephemeral: true });
-
+ 
     const betreff = interaction.fields.getTextInputValue("support_betreff").trim();
     const beschreibung = interaction.fields.getTextInputValue("support_beschreibung").trim();
     const chan = await openTicketChannel(guild, interaction.user, {
@@ -757,12 +760,12 @@ client.on("interactionCreate", async interaction => {
     log(guild, `${interaction.user.tag} hat ein Support-Ticket eröffnet: ${betreff}`);
     return interaction.reply({ content: `✅ Ticket erstellt: ${chan}`, ephemeral: true });
   }
-
+ 
   if (interaction.isModalSubmit() && interaction.customId === "verleih_modal") {
     const pending = verleihPending.get(interaction.user.id);
     if (!pending) return interaction.reply({ content: "❌ Deine Auswahl ist abgelaufen. Bitte starte erneut über den Button.", ephemeral: true });
     verleihPending.delete(interaction.user.id);
-
+ 
     const guild = interaction.guild, c = cfg(guild.id);
     const item = itemsTable(guild.id)[pending.itemId];
     if (!item || !item.verfuegbar) {
@@ -770,10 +773,10 @@ client.on("interactionCreate", async interaction => {
     }
     const existing = guild.channels.cache.find(x => x.topic === `verleih:${interaction.user.id}`);
     if (existing) return interaction.reply({ content: `Du hast bereits eine offene Verleih-Anfrage: ${existing}`, ephemeral: true });
-
+ 
     const zeitraum = interaction.fields.getTextInputValue("verleih_zeitraum").trim();
     const notiz = interaction.fields.getTextInputValue("verleih_notiz")?.trim();
-
+ 
     const embed = new EmbedBuilder()
       .setTitle(`📦 Ausleihe: ${item.name}`)
       .setColor(0x9b5cff)
@@ -784,12 +787,12 @@ client.on("interactionCreate", async interaction => {
       .setFooter({ text: "Verleih-Anfrage – wartet auf Genehmigung" });
     if (item.beschreibung) embed.addFields({ name: "Item-Beschreibung", value: item.beschreibung });
     if (notiz) embed.addFields({ name: "Notiz", value: notiz });
-
+ 
     const approveRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("verleih_approve").setLabel("Genehmigen").setEmoji("✅").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("verleih_decline").setLabel("Ablehnen").setEmoji("❌").setStyle(ButtonStyle.Danger)
     );
-
+ 
     const chan = await openTicketChannel(guild, interaction.user, {
       prefix: "verleih",
       topic: `verleih:${interaction.user.id}`,
@@ -802,10 +805,10 @@ client.on("interactionCreate", async interaction => {
     log(guild, `${interaction.user.tag} möchte "${item.name}" ausleihen (${zeitraum}).`);
     return interaction.reply({ content: `✅ Anfrage erstellt: ${chan}`, ephemeral: true });
   }
-
+ 
   if (!interaction.isChatInputCommand()) return;
   const { commandName, guild, member, channel } = interaction;
-
+ 
   try {
     if (commandName === "help") {
       return interaction.reply({ embeds: [new EmbedBuilder().setTitle("🤖 Squizyys Bot").setDescription(
@@ -817,19 +820,120 @@ client.on("interactionCreate", async interaction => {
         "**System:** `/setup` `/config` `/setlogs` `/ticket` `/joincreate` `/voicepanel`"
       ).setColor(0x9b5cff)] });
     }
-
+ 
     if (commandName === "setup") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageGuild)) return interaction.reply({ content: "❌ Du brauchst Server verwalten.", ephemeral: true });
-      const category = await guild.channels.create({ name: "🎫｜SUPPORT", type: ChannelType.GuildCategory }).catch(() => null);
-      const ticket = await guild.channels.create({ name: "🎫｜tickets", type: ChannelType.GuildText, parent: category?.id || null }).catch(() => null);
-      if (ticket) {
-        await ticket.send(ticketPanel());
+      await interaction.deferReply();
+      const c = cfg(guild.id);
+      const everyone = guild.roles.everyone;
+      const created = [];
+ 
+      async function ensureCategory(name, overwrites) {
+        const formatted = formatChannelName(name) || name;
+        let cat = guild.channels.cache.find(ch => ch.type === ChannelType.GuildCategory && (ch.name === name || ch.name === formatted));
+        if (cat) return { channel: cat, isNew: false };
+        cat = await guild.channels.create({ name, type: ChannelType.GuildCategory, permissionOverwrites: overwrites || [] });
+        created.push(cat.name);
+        return { channel: cat, isNew: true };
       }
-      if (category) cfg(guild.id).ticketCategory = category.id;
+ 
+      async function ensureChannel(name, type, parent, opts = {}) {
+        const formatted = formatChannelName(name) || name;
+        let ch = guild.channels.cache.find(x => x.type === type && x.parentId === parent.id && (x.name === name || x.name === formatted));
+        if (ch) return { channel: ch, isNew: false };
+        ch = await guild.channels.create({ name, type, parent: parent.id, ...opts });
+        created.push(ch.name);
+        return { channel: ch, isNew: true };
+      }
+ 
+      // Rollen
+      let teamRole = guild.roles.cache.find(r => r.name === "Team");
+      if (!teamRole) {
+        teamRole = await guild.roles.create({
+          name: "Team",
+          color: 0x9b5cff,
+          hoist: true,
+          permissions: [
+            PermissionsBitField.Flags.KickMembers,
+            PermissionsBitField.Flags.BanMembers,
+            PermissionsBitField.Flags.ModerateMembers,
+            PermissionsBitField.Flags.ManageMessages,
+            PermissionsBitField.Flags.ManageChannels,
+            PermissionsBitField.Flags.ManageNicknames
+          ]
+        });
+        created.push("Rolle @Team");
+      }
+      let memberRole = guild.roles.cache.find(r => r.name === "Mitglied");
+      if (!memberRole) {
+        memberRole = await guild.roles.create({ name: "Mitglied", hoist: false, permissions: [] });
+        created.push("Rolle @Mitglied");
+      }
+      c.memberRole = memberRole.id;
+ 
+      // 📌 Informationen (read-only für alle, Team darf schreiben)
+      const { channel: infoCategory } = await ensureCategory("📌｜INFORMATIONEN", [
+        { id: everyone.id, deny: [PermissionsBitField.Flags.SendMessages] },
+        { id: teamRole.id, allow: [PermissionsBitField.Flags.SendMessages] }
+      ]);
+      const { channel: regelnChannel } = await ensureChannel("📜｜regeln", ChannelType.GuildText, infoCategory, { topic: "Die Serverregeln." });
+      const { channel: ankuendigungenChannel } = await ensureChannel("📢｜ankündigungen", ChannelType.GuildText, infoCategory, { topic: "Ankündigungen des Teams." });
+      const { channel: willkommenChannel, isNew: willkommenIsNew } = await ensureChannel("👋｜willkommen", ChannelType.GuildText, infoCategory, { topic: "Willkommen auf dem Server!" });
+      if (willkommenIsNew) {
+        await willkommenChannel.send({ embeds: [new EmbedBuilder().setTitle("📜 Regeln").setDescription("1. Sei respektvoll.\n2. Kein Spam, keine Werbung.\n3. Folge den Anweisungen des Teams.\n\nDiesen Text kannst du jederzeit anpassen.").setColor(0x9b5cff)] }).catch(() => {});
+        await regelnChannel.send({ embeds: [new EmbedBuilder().setTitle("📜 Regeln").setDescription("1. Sei respektvoll.\n2. Kein Spam, keine Werbung.\n3. Folge den Anweisungen des Teams.").setColor(0x9b5cff)] }).catch(() => {});
+      }
+      c.welcomeChannel = willkommenChannel.id;
+ 
+      // 💬 Community
+      const { channel: communityCategory } = await ensureCategory("💬｜COMMUNITY");
+      await ensureChannel("💬｜allgemein", ChannelType.GuildText, communityCategory);
+      await ensureChannel("🎉｜off-topic", ChannelType.GuildText, communityCategory);
+ 
+      // 🔊 Voice
+      const { channel: voiceCategory } = await ensureCategory("🔊｜VOICE");
+      const { channel: joinCreateChannel } = await ensureChannel("➕｜Join to Create", ChannelType.GuildVoice, voiceCategory);
+      await ensureChannel("🎶｜Lounge", ChannelType.GuildVoice, voiceCategory);
+      c.joinCreateChannel = joinCreateChannel.id;
+      c.joinCreateCategory = voiceCategory.id;
+ 
+      // 🎫 Tickets
+      const { channel: ticketCategory } = await ensureCategory("🎫｜TICKETS");
+      const { channel: ticketChannel, isNew: ticketIsNew } = await ensureChannel("🎫｜tickets", ChannelType.GuildText, ticketCategory);
+      if (ticketIsNew) await ticketChannel.send(ticketPanel()).catch(() => {});
+      c.ticketCategory = ticketCategory.id;
+ 
+      // 🛠️ Team-Bereich (privat)
+      const { channel: teamCategory } = await ensureCategory("🛠️｜TEAM", [
+        { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: teamRole.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+      ]);
+      const { channel: logsChannel } = await ensureChannel("📋｜logs", ChannelType.GuildText, teamCategory);
+      c.logChannel = logsChannel.id;
+ 
       save();
-      return interaction.reply("✅ Grundsetup abgeschlossen. Ein Ticket-Bereich wurde erstellt.");
+ 
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("✅ Server eingerichtet")
+            .setColor(0x9b5cff)
+            .setDescription(
+              created.length
+                ? `Neu erstellt:\n${created.map(n => `• ${n}`).join("\n")}`
+                : "Alles war schon eingerichtet, es wurde nichts Neues erstellt."
+            )
+            .addFields(
+              { name: "Willkommen", value: `${willkommenChannel}`, inline: true },
+              { name: "Logs", value: `${logsChannel}`, inline: true },
+              { name: "Tickets", value: `${ticketChannel}`, inline: true },
+              { name: "Join-to-Create", value: `${joinCreateChannel}`, inline: true }
+            )
+            .setFooter({ text: "Vergib die Rolle @Team an dein Team – neue Mitglieder erhalten @Mitglied automatisch." })
+        ]
+      });
     }
-
+ 
     if (commandName === "setlogs") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageGuild)) {
         return interaction.reply({ content: "❌ Du brauchst die Berechtigung „Server verwalten“.", ephemeral: true });
@@ -837,19 +941,19 @@ client.on("interactionCreate", async interaction => {
       if (channel.type !== ChannelType.GuildText) {
         return interaction.reply({ content: "❌ Führe den Befehl in einem Textkanal aus.", ephemeral: true });
       }
-
+ 
       cfg(guild.id).logChannel = channel.id;
       save();
       return interaction.reply(`✅ Alle Bot-Logs werden ab jetzt in ${channel} geschrieben.`);
     }
-
+ 
     if (commandName === "config") {
       const c = cfg(guild.id);
       return interaction.reply({ ephemeral: true, content:
-        `⚙️ **Konfiguration**\nWelcome: ${c.welcomeChannel ? `<#${c.welcomeChannel}>` : "nicht gesetzt"}\nLogs: ${c.logChannel ? `<#${c.logChannel}>` : "nicht gesetzt"}\nTicket-Kategorie: ${c.ticketCategory ? `<#${c.ticketCategory}>` : "nicht gesetzt"}\nJoin-to-Create: ${c.joinCreateChannel ? `<#${c.joinCreateChannel}>` : "nicht gesetzt"}\nEmoji-Format: ${c.emojiFormat ? "an" : "aus"}\nLevel-Kanal: ${c.levelChannel ? `<#${c.levelChannel}>` : "Kanal der Nachricht"}\nLevel-Rollen: ${Object.keys(c.levelRoles || {}).length}`
+        `⚙️ **Konfiguration**\nWelcome: ${c.welcomeChannel ? `<#${c.welcomeChannel}>` : "nicht gesetzt"}\nLogs: ${c.logChannel ? `<#${c.logChannel}>` : "nicht gesetzt"}\nTicket-Kategorie: ${c.ticketCategory ? `<#${c.ticketCategory}>` : "nicht gesetzt"}\nJoin-to-Create: ${c.joinCreateChannel ? `<#${c.joinCreateChannel}>` : "nicht gesetzt"}\nEmoji-Format: ${c.emojiFormat ? "an" : "aus"}\nLevel-Kanal: ${c.levelChannel ? `<#${c.levelChannel}>` : "Kanal der Nachricht"}\nLevel-Rollen: ${Object.keys(c.levelRoles || {}).length}\nMitglieder-Rolle: ${c.memberRole ? `<@&${c.memberRole}>` : "nicht gesetzt"}`
       });
     }
-
+ 
     if (commandName === "clear") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageMessages)) return interaction.reply({ content: "❌ Keine Berechtigung.", ephemeral: true });
       const n = interaction.options.getInteger("anzahl");
@@ -858,12 +962,12 @@ client.on("interactionCreate", async interaction => {
       await interaction.editReply(`🧹 ${messages.size} Nachrichten gelöscht.`);
       return;
     }
-
+ 
     if (["kick", "ban", "timeout", "warn", "warnings"].includes(commandName)) {
       const user = interaction.options.getUser("mitglied");
       const target = await guild.members.fetch(user.id).catch(() => null);
       if (!target && commandName !== "warnings") return interaction.reply({ content: "❌ Mitglied nicht gefunden.", ephemeral: true });
-
+ 
       if (commandName === "kick") {
         if (!ok(interaction, PermissionsBitField.Flags.KickMembers)) return interaction.reply({ content: "❌ Keine Kick-Berechtigung.", ephemeral: true });
         if (!target.kickable) return interaction.reply({ content: "❌ Ich kann dieses Mitglied nicht kicken.", ephemeral: true });
@@ -899,14 +1003,14 @@ client.on("interactionCreate", async interaction => {
         return interaction.reply({ ephemeral: true, content: list.length ? list.map((w, i) => `${i + 1}. ${w.reason}`).join("\n") : "Keine Verwarnungen." });
       }
     }
-
+ 
     if (commandName === "announce") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageGuild)) return interaction.reply({ content: "❌ Keine Berechtigung.", ephemeral: true });
       const text = interaction.options.getString("text");
       await interaction.reply({ content: "✅ Gesendet.", ephemeral: true });
       return channel.send({ embeds: [new EmbedBuilder().setTitle("📢 Ankündigung").setDescription(text).setColor(0x9b5cff).setTimestamp()] });
     }
-
+ 
     if (commandName === "poll") {
       const q = interaction.options.getString("frage");
       const msg = await channel.send({ embeds: [new EmbedBuilder().setTitle("📊 Umfrage").setDescription(q).setColor(0x9b5cff)] });
@@ -914,39 +1018,39 @@ client.on("interactionCreate", async interaction => {
       await msg.react("👎");
       return interaction.reply({ content: "✅ Umfrage erstellt.", ephemeral: true });
     }
-
+ 
     if (commandName === "say") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageMessages)) return interaction.reply({ content: "❌ Keine Berechtigung.", ephemeral: true });
       const text = interaction.options.getString("text");
       await interaction.reply({ content: "✅", ephemeral: true });
       return channel.send(text);
     }
-
+ 
     if (commandName === "lock" || commandName === "unlock") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageChannels)) return interaction.reply({ content: "❌ Keine Berechtigung.", ephemeral: true });
       const deny = commandName === "lock";
       await channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: deny });
       return interaction.reply(deny ? "🔒 Kanal gesperrt." : "🔓 Kanal entsperrt.");
     }
-
+ 
     if (commandName === "slowmode") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageChannels)) return interaction.reply({ content: "❌ Keine Berechtigung.", ephemeral: true });
       const sec = interaction.options.getInteger("sekunden");
       await channel.setRateLimitPerUser(sec);
       return interaction.reply(`🐢 Slowmode: ${sec} Sekunden.`);
     }
-
+ 
     if (commandName === "ticket") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageChannels)) return interaction.reply({ content: "❌ Keine Berechtigung.", ephemeral: true });
       await channel.send(ticketPanel());
       return interaction.reply({ content: "✅ Ticket-Panel erstellt.", ephemeral: true });
     }
-
+ 
     if (commandName === "item") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageGuild)) return interaction.reply({ content: "❌ Du brauchst die Berechtigung „Server verwalten“.", ephemeral: true });
       const items = itemsTable(guild.id);
       const sub = interaction.options.getSubcommand();
-
+ 
       if (sub === "hinzufuegen") {
         const name = interaction.options.getString("name").trim();
         const id = itemId(name);
@@ -955,7 +1059,7 @@ client.on("interactionCreate", async interaction => {
         save();
         return interaction.reply({ content: `✅ **${name}** wurde zum Verleih-Katalog hinzugefügt.`, ephemeral: true });
       }
-
+ 
       if (sub === "entfernen") {
         const id = itemId(interaction.options.getString("name").trim());
         if (!items[id]) return interaction.reply({ content: "❌ Dieses Item gibt es nicht im Katalog.", ephemeral: true });
@@ -963,7 +1067,7 @@ client.on("interactionCreate", async interaction => {
         save();
         return interaction.reply({ content: "✅ Item wurde entfernt.", ephemeral: true });
       }
-
+ 
       const entries = Object.values(items);
       if (!entries.length) return interaction.reply({ content: "Der Verleih-Katalog ist leer.", ephemeral: true });
       return interaction.reply({
@@ -976,7 +1080,7 @@ client.on("interactionCreate", async interaction => {
         ephemeral: true
       });
     }
-
+ 
     if (commandName === "joincreate") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageChannels)) return interaction.reply({ content: "❌ Keine Berechtigung.", ephemeral: true });
       if (channel.type !== ChannelType.GuildVoice) return interaction.reply({ content: "❌ Nutze den Befehl in einem Voice-Channel.", ephemeral: true });
@@ -986,14 +1090,14 @@ client.on("interactionCreate", async interaction => {
       save();
       return interaction.reply(`🔊 ${channel} ist jetzt dein Join-to-Create-Kanal.`);
     }
-
+ 
     if (commandName === "voicepanel") {
       const voice = getOwnedVoiceChannel(guild, interaction.user.id);
       if (!voice) return interaction.reply({ content: "❌ Du hast keinen eigenen Join-to-Create-Call.", ephemeral: true });
       await voice.send(voicePanel(voice));
       return interaction.reply({ content: `✅ Das Verwaltungs-Panel wurde in ${voice} gepostet.`, ephemeral: true });
     }
-
+ 
     if (commandName === "format") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageChannels)) return interaction.reply({ content: "❌ Keine Berechtigung.", ephemeral: true });
       const target = interaction.options.getChannel("kanal") || channel;
@@ -1002,7 +1106,7 @@ client.on("interactionCreate", async interaction => {
       await target.setName(newName);
       return interaction.reply(`✅ ${target} formatiert.`);
     }
-
+ 
     if (commandName === "rank") {
       const user = interaction.options.getUser("mitglied") || interaction.user;
       if (user.bot) return interaction.reply({ content: "❌ Bots sammeln keine XP.", ephemeral: true });
@@ -1025,7 +1129,7 @@ client.on("interactionCreate", async interaction => {
         ]
       });
     }
-
+ 
     if (commandName === "leaderboard") {
       const ranking = xpRanking(guild.id);
       if (!ranking.length) return interaction.reply({ content: "Noch niemand hat XP gesammelt.", ephemeral: true });
@@ -1048,7 +1152,7 @@ client.on("interactionCreate", async interaction => {
         ]
       });
     }
-
+ 
     if (commandName === "levelrole") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageRoles)) {
         return interaction.reply({ content: "❌ Du brauchst die Berechtigung „Rollen verwalten“.", ephemeral: true });
@@ -1056,7 +1160,7 @@ client.on("interactionCreate", async interaction => {
       const c = cfg(guild.id);
       c.levelRoles ??= {};
       const sub = interaction.options.getSubcommand();
-
+ 
       if (sub === "setzen") {
         const level = interaction.options.getInteger("level");
         const role = interaction.options.getRole("rolle");
@@ -1071,7 +1175,7 @@ client.on("interactionCreate", async interaction => {
         save();
         return interaction.reply({ content: `✅ Ab Level ${level} gibt es ${role}.`, ephemeral: true });
       }
-
+ 
       if (sub === "entfernen") {
         const level = interaction.options.getInteger("level");
         if (!c.levelRoles[level]) return interaction.reply({ content: "❌ Für dieses Level ist keine Rolle eingestellt.", ephemeral: true });
@@ -1079,14 +1183,14 @@ client.on("interactionCreate", async interaction => {
         save();
         return interaction.reply({ content: `✅ Die Belohnung für Level ${level} wurde entfernt.`, ephemeral: true });
       }
-
+ 
       const entries = Object.entries(c.levelRoles).sort((a, b) => Number(a[0]) - Number(b[0]));
       return interaction.reply({
         content: entries.length ? entries.map(([lvl, roleId]) => `Level ${lvl} → <@&${roleId}>`).join("\n") : "Es sind noch keine Level-Rollen eingestellt.",
         ephemeral: true
       });
     }
-
+ 
     if (commandName === "levelchannel") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageGuild)) {
         return interaction.reply({ content: "❌ Du brauchst die Berechtigung „Server verwalten“.", ephemeral: true });
@@ -1102,7 +1206,7 @@ client.on("interactionCreate", async interaction => {
       save();
       return interaction.reply({ content: `✅ Level-Ups werden ab jetzt in ${target} angezeigt.`, ephemeral: true });
     }
-
+ 
     if (commandName === "xp") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageGuild)) {
         return interaction.reply({ content: "❌ Keine Berechtigung.", ephemeral: true });
@@ -1110,7 +1214,7 @@ client.on("interactionCreate", async interaction => {
       const sub = interaction.options.getSubcommand();
       const user = interaction.options.getUser("mitglied");
       if (user.bot) return interaction.reply({ content: "❌ Bots sammeln keine XP.", ephemeral: true });
-
+ 
       if (sub === "geben") {
         const amount = interaction.options.getInteger("menge");
         const target = await guild.members.fetch(user.id).catch(() => null);
@@ -1119,21 +1223,21 @@ client.on("interactionCreate", async interaction => {
         const total = xpTable(guild.id)[user.id].xp;
         return interaction.reply({ content: `✅ ${user} hat ${amount} XP erhalten (jetzt Level ${levelFromXp(total).level}, ${total} XP).`, ephemeral: true });
       }
-
+ 
       delete xpTable(guild.id)[user.id];
       save();
       return interaction.reply({ content: `✅ Die XP von ${user} wurden zurückgesetzt.`, ephemeral: true });
     }
-
+ 
     if (commandName === "zeitplan") {
       if (!isStaff(member)) return interaction.reply({ content: "❌ Nur das Team kann Zeitpläne erstellen.", ephemeral: true });
-
+ 
       const typ = interaction.options.getString("typ");
       const timeMatch = interaction.options.getString("uhrzeit").trim().match(/^([01]?\d|2[0-3])[:.]([0-5]\d)$/);
       if (!timeMatch) {
         return interaction.reply({ content: "❌ Bitte gib die Uhrzeit im Format HH:MM an, z. B. 18:00.", ephemeral: true });
       }
-
+ 
       const entry = {
         typ,
         uhrzeit: `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}`,
@@ -1145,7 +1249,7 @@ client.on("interactionCreate", async interaction => {
       setTimeout(() => {
         if (zeitplanPending.get(interaction.user.id) === entry) zeitplanPending.delete(interaction.user.id);
       }, 5 * 60 * 1000);
-
+ 
       const select = new StringSelectMenuBuilder()
         .setCustomId("zeitplan_days")
         .setPlaceholder("Wähle die Tage aus")
@@ -1154,24 +1258,24 @@ client.on("interactionCreate", async interaction => {
         .addOptions(WEEKDAYS.map((name, i) =>
           new StringSelectMenuOptionBuilder().setLabel(name).setValue(String(i + 1))
         ));
-
+ 
       return interaction.reply({
         content: `${typ === "video" ? "🎬 Video" : "📺 Stream"} um ${entry.uhrzeit} Uhr – an welchen Tagen?`,
         components: [new ActionRowBuilder().addComponents(select)],
         ephemeral: true
       });
     }
-
+ 
     if (commandName === "glowup") {
       if (!ok(interaction, PermissionsBitField.Flags.ManageChannels)) {
         return interaction.reply({ content: "❌ Du brauchst die Berechtigung „Kanäle verwalten“.", ephemeral: true });
       }
-
+ 
       const target = interaction.options.getChannel("kanal") || channel;
       if (!target || ![ChannelType.GuildText, ChannelType.GuildAnnouncement].includes(target.type)) {
         return interaction.reply({ content: "❌ `/glowup` funktioniert nur in Text- oder Ankündigungskanälen.", ephemeral: true });
       }
-
+ 
       const requestedName = interaction.options.getString("name")?.trim();
       const currentBaseName = target.name.replace(/^『[^』]+』\s*/u, "").trim();
       const nameSource = requestedName || currentBaseName;
@@ -1179,10 +1283,10 @@ client.on("interactionCreate", async interaction => {
       if (!formattedName) {
         return interaction.reply({ content: "❌ Der Kanalname konnte nicht formatiert werden.", ephemeral: true });
       }
-
+ 
       const requestedDescription = interaction.options.getString("beschreibung")?.trim();
       const description = (requestedDescription || target.topic || `✨ Willkommen in ${target}! Bitte bleibt freundlich und respektvoll.`).slice(0, 1024);
-
+ 
       await target.setName(formattedName.slice(0, 100));
       await target.setTopic(description);
       await target.permissionOverwrites.edit(guild.roles.everyone, {
@@ -1201,7 +1305,7 @@ client.on("interactionCreate", async interaction => {
             .setTimestamp()
         ]
       });
-
+ 
       log(guild, `${interaction.user.tag} hat ${target.name} ein Channel-Glow-Up gegeben.`);
       return interaction.reply({ content: `✨ ${target} hat jetzt ein Glow Up bekommen.`, ephemeral: true });
     }
@@ -1212,7 +1316,7 @@ client.on("interactionCreate", async interaction => {
     }
   }
 });
-
+ 
 client.on("error", console.error);
 for (const sig of ["SIGTERM", "SIGINT"]) {
   process.on(sig, () => {
@@ -1221,5 +1325,5 @@ for (const sig of ["SIGTERM", "SIGINT"]) {
   });
 }
 process.on("unhandledRejection", console.error);
-
+ 
 client.login(TOKEN);
