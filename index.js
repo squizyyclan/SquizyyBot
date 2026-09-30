@@ -140,7 +140,7 @@ function save() {
   fs.writeFileSync(DATA, JSON.stringify(db, null, 2));
 }
 function cfg(guildId) {
-  if (!db[guildId]) db[guildId] = { welcomeChannel: null, logChannel: null, ticketCategory: null, joinCreateChannel: null, joinCreateCategory: null, emojiFormat: true, warnings: {}, memberRole: null };
+  if (!db[guildId]) db[guildId] = { welcomeChannel: null, logChannel: null, ticketCategory: null, joinCreateChannel: null, joinCreateCategory: null, emojiFormat: true, warnings: {}, memberRole: null, itemStatusChannel: null, itemStatusMessage: null };
   return db[guildId];
 }
 function isStaff(member) {
@@ -165,6 +165,47 @@ function itemId(name) {
 }
 const verleihPending = new Map();
 db.verleihRequests ??= {};
+ 
+function itemStatusEmbed(guildId) {
+  const items = Object.values(itemsTable(guildId)).sort((a, b) => a.name.localeCompare(b.name, "de"));
+  if (!items.length) {
+    return new EmbedBuilder()
+      .setTitle("📦 Item-Status")
+      .setDescription("Der Verleih-Katalog ist noch leer.")
+      .setColor(0x9b5cff)
+      .setTimestamp();
+  }
+  const lines = items.map(it => {
+    if (it.verfuegbar) return `🟢 **${it.name}** – verfügbar`;
+    const wer = it.verliehenAn ? ` an <@${it.verliehenAn}>` : "";
+    const bis = it.verliehenBis ? ` bis **${it.verliehenBis}**` : "";
+    return `🔴 **${it.name}** – verliehen${wer}${bis}`;
+  });
+  return new EmbedBuilder()
+    .setTitle("📦 Item-Status")
+    .setDescription(lines.join("\n"))
+    .setColor(0x9b5cff)
+    .setFooter({ text: "Aktualisiert sich automatisch" })
+    .setTimestamp();
+}
+ 
+async function updateItemStatusMessage(guild) {
+  const c = cfg(guild.id);
+  if (!c.itemStatusChannel) return;
+  const channel = guild.channels.cache.get(c.itemStatusChannel);
+  if (!channel?.isTextBased()) return;
+  const embed = itemStatusEmbed(guild.id);
+ 
+  if (c.itemStatusMessage) {
+    const msg = await channel.messages.fetch(c.itemStatusMessage).catch(() => null);
+    if (msg) return msg.edit({ embeds: [embed] }).catch(() => {});
+  }
+  const msg = await channel.send({ embeds: [embed] }).catch(() => null);
+  if (msg) {
+    c.itemStatusMessage = msg.id;
+    save();
+  }
+}
 // ITEMS-END
  
 function setVoiceOwner(channel, ownerId) {
@@ -495,6 +536,7 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
 });
  
 client.on("interactionCreate", async interaction => {
+ try {
   if (interaction.isModalSubmit() && interaction.customId === "voice_rename_modal") {
     const voice = interaction.guild ? getOwnedVoiceChannel(interaction.guild, interaction.user.id) : null;
     if (!voice) return interaction.reply({ content: "❌ Du hast keinen eigenen Join-to-Create-Call.", ephemeral: true });
@@ -666,9 +708,11 @@ client.on("interactionCreate", async interaction => {
     const select = new StringSelectMenuBuilder()
       .setCustomId("verleih_item_select")
       .setPlaceholder("Wähle ein Item aus")
-      .addOptions(items.slice(0, 25).map(([id, it]) =>
-        new StringSelectMenuOptionBuilder().setLabel(it.name.slice(0, 100)).setValue(id).setDescription((it.beschreibung || "").slice(0, 100) || undefined)
-      ));
+      .addOptions(items.slice(0, 25).map(([id, it]) => {
+        const opt = new StringSelectMenuOptionBuilder().setLabel(it.name.slice(0, 100)).setValue(id);
+        if (it.beschreibung) opt.setDescription(it.beschreibung.slice(0, 100));
+        return opt;
+      }));
     return interaction.reply({
       content: "Welches Item möchtest du ausleihen?",
       components: [new ActionRowBuilder().addComponents(select)],
@@ -711,7 +755,11 @@ client.on("interactionCreate", async interaction => {
     const approve = interaction.customId === "verleih_approve";
  
     if (approve) {
-      if (item) item.verfuegbar = false;
+      if (item) {
+        item.verfuegbar = false;
+        item.verliehenAn = req.userId;
+        item.verliehenBis = req.zeitraum || null;
+      }
       save();
       await interaction.reply({ embeds: [new EmbedBuilder().setDescription(`✅ Genehmigt von ${interaction.user}. Viel Spaß mit **${item?.name || req.itemName}**!`).setColor(0x57f287)] });
     } else {
@@ -725,6 +773,7 @@ client.on("interactionCreate", async interaction => {
     await interaction.message.edit({ components: [disabledRow, interaction.message.components[1]] }).catch(() => {});
     delete db.verleihRequests[reqId];
     save();
+    await updateItemStatusMessage(interaction.guild);
     return;
   }
  
@@ -762,12 +811,25 @@ client.on("interactionCreate", async interaction => {
   if (interaction.isButton() && interaction.customId === "ticket_close") {
     if (!isStaff(interaction.member)) return interaction.reply({ content: "❌ Nur das Team kann Tickets schließen.", ephemeral: true });
     const reqId = interaction.channel.id;
+    let itemReturned = false;
     if (db.verleihRequests[reqId]) {
       const item = itemsTable(interaction.guild.id)[db.verleihRequests[reqId].itemId];
       if (item) item.verfuegbar = true;
       delete db.verleihRequests[reqId];
       save();
+      itemReturned = true;
+    } else {
+      const items = itemsTable(interaction.guild.id);
+      const owned = Object.values(items).find(it => !it.verfuegbar && it.verliehenAn && interaction.channel.topic === `verleih:${it.verliehenAn}`);
+      if (owned) {
+        owned.verfuegbar = true;
+        delete owned.verliehenAn;
+        delete owned.verliehenBis;
+        save();
+        itemReturned = true;
+      }
     }
+    if (itemReturned) await updateItemStatusMessage(interaction.guild);
     await interaction.reply("🔒 Ticket wird geschlossen...");
     setTimeout(() => interaction.channel?.delete().catch(() => {}), 1500);
     return;
@@ -833,7 +895,7 @@ client.on("interactionCreate", async interaction => {
       embed,
       extraRow: approveRow
     });
-    db.verleihRequests[chan.id] = { itemId: pending.itemId, itemName: item.name, userId: interaction.user.id, guildId: guild.id };
+    db.verleihRequests[chan.id] = { itemId: pending.itemId, itemName: item.name, userId: interaction.user.id, guildId: guild.id, zeitraum };
     save();
     log(guild, `${interaction.user.tag} möchte "${item.name}" ausleihen (${zeitraum}).`);
     return interaction.reply({ content: `✅ Anfrage erstellt: ${chan}`, ephemeral: true });
@@ -935,6 +997,8 @@ client.on("interactionCreate", async interaction => {
       const { channel: ticketChannel, isNew: ticketIsNew } = await ensureChannel("🎫｜tickets", ChannelType.GuildText, ticketCategory);
       if (ticketIsNew) await ticketChannel.send(ticketPanel()).catch(() => {});
       c.ticketCategory = ticketCategory.id;
+      c.itemStatusChannel = ticketChannel.id;
+      await updateItemStatusMessage(guild);
  
       // 🛠️ Team-Bereich (privat)
       const { channel: teamCategory } = await ensureCategory("🛠️｜TEAM", [
@@ -1112,6 +1176,7 @@ client.on("interactionCreate", async interaction => {
         if (items[id]) return interaction.reply({ content: "❌ Ein Item mit diesem Namen gibt es schon.", ephemeral: true });
         items[id] = { name, beschreibung: interaction.options.getString("beschreibung")?.trim() || null, verfuegbar: true };
         save();
+        await updateItemStatusMessage(guild);
         return interaction.reply({ content: `✅ **${name}** wurde zum Verleih-Katalog hinzugefügt.`, ephemeral: true });
       }
  
@@ -1120,6 +1185,7 @@ client.on("interactionCreate", async interaction => {
         if (!items[id]) return interaction.reply({ content: "❌ Dieses Item gibt es nicht im Katalog.", ephemeral: true });
         delete items[id];
         save();
+        await updateItemStatusMessage(guild);
         return interaction.reply({ content: "✅ Item wurde entfernt.", ephemeral: true });
       }
  
@@ -1370,6 +1436,12 @@ client.on("interactionCreate", async interaction => {
       await interaction.reply({ content: "❌ Es ist ein Fehler aufgetreten. Prüfe die Bot-Berechtigungen und die Konsole.", ephemeral: true }).catch(() => {});
     }
   }
+ } catch (e) {
+  console.error(e);
+  if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+    await interaction.reply({ content: "❌ Es ist ein Fehler aufgetreten. Prüfe die Bot-Berechtigungen und die Konsole.", ephemeral: true }).catch(() => {});
+  }
+ }
 });
  
 client.on("error", console.error);
